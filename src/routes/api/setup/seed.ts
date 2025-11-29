@@ -64,8 +64,8 @@ const defaultTheme: Theme = {
 export const defaultRoles = importedDefaultRoles;
 
 // Seeds the default theme into the database
-export async function seedDefaultTheme(dbAdapter: DatabaseAdapter): Promise<void> {
-	logger.info('🎨 Checking if default theme needs seeding...');
+export async function seedDefaultTheme(dbAdapter: DatabaseAdapter, tenantId?: string): Promise<void> {
+	logger.info(`🎨 Checking if default theme needs seeding${tenantId ? ` for tenant ${tenantId}` : ''}...`);
 
 	if (!dbAdapter || !dbAdapter.themes) {
 		throw new Error('Database adapter or themes interface not available');
@@ -73,18 +73,22 @@ export async function seedDefaultTheme(dbAdapter: DatabaseAdapter): Promise<void
 
 	try {
 		// Check if themes already exist
-		const existingThemes = await dbAdapter.themes.getAllThemes();
+		const existingThemes = await dbAdapter.themes.getAllThemes(tenantId); // Pass tenantId
 		if (Array.isArray(existingThemes) && existingThemes.length > 0) {
-			logger.info('✅ Themes already exist, skipping theme seeding');
+			logger.info(`✅ Themes already exist${tenantId ? ` for tenant ${tenantId}` : ''}, skipping theme seeding`);
 			return;
 		}
 
 		// Seed the default theme
-		logger.info('🎨 Seeding default theme...');
-		await dbAdapter.themes.storeThemes([defaultTheme]);
-		logger.info('✅ Default theme seeded successfully');
+		logger.info(`🎨 Seeding default theme${tenantId ? ` for tenant ${tenantId}` : ''}...`);
+		const themeToStore = {
+			...defaultTheme,
+			...(tenantId && { tenantId }) // Add tenantId to the theme
+		};
+		await dbAdapter.themes.storeThemes([themeToStore]); // storeThemes should handle tenantId
+		logger.info(`✅ Default theme seeded successfully${tenantId ? ` for tenant ${tenantId}` : ''}`);
 	} catch (error) {
-		logger.error('Failed to seed default theme:', error);
+		logger.error(`Failed to seed default theme${tenantId ? ` for tenant ${tenantId}` : ''}:`, error);
 		throw error;
 	}
 }
@@ -94,8 +98,8 @@ export async function seedDefaultTheme(dbAdapter: DatabaseAdapter): Promise<void
  * Roles are now stored in database for dynamic management via UI
  * Admin role gets all available permissions automatically
  */
-export async function seedRoles(dbAdapter: DatabaseAdapter): Promise<void> {
-	logger.info('🔐 Seeding default roles...');
+export async function seedRoles(dbAdapter: DatabaseAdapter, tenantId?: string): Promise<void> {
+	logger.info(`🔐 Seeding default roles${tenantId ? ` for tenant ${tenantId}` : ''}...`);
 
 	if (!dbAdapter || !dbAdapter.auth) {
 		throw new Error('Database adapter or auth interface not available');
@@ -112,26 +116,27 @@ export async function seedRoles(dbAdapter: DatabaseAdapter): Promise<void> {
 				// Admin role gets all permissions
 				const roleToCreate = {
 					...role,
-					permissions: role._id === 'admin' ? adminPermissions : role.permissions
+					permissions: role._id === 'admin' ? adminPermissions : role.permissions,
+					...(tenantId && { tenantId }) // Add tenantId to the role
 				};
 
-				await dbAdapter.auth.createRole(roleToCreate);
-				logger.debug(`✅ Role "${role.name}" seeded successfully`);
+				await dbAdapter.auth.createRole(roleToCreate); // createRole also needs to accept tenantId
+				logger.debug(`✅ Role "${role.name}" seeded successfully${tenantId ? ` for tenant ${tenantId}` : ''}`);
 			} catch (error) {
 				// Skip if role already exists (duplicate key error)
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				if (errorMessage.includes('duplicate') || errorMessage.includes('E11000')) {
-					logger.debug(`ℹ️  Role "${role.name}" already exists, skipping`);
+					logger.debug(`ℹ️  Role "${role.name}" already exists${tenantId ? ` for tenant ${tenantId}` : ''}, skipping`);
 				} else {
-					logger.error(`Failed to seed role "${role.name}":`, error);
+					logger.error(`Failed to seed role "${role.name}"${tenantId ? ` for tenant ${tenantId}` : ''}:`, error);
 					throw error;
 				}
 			}
 		}
 
-		logger.info('✅ Default roles seeded successfully');
+		logger.info(`✅ Default roles seeded successfully${tenantId ? ` for tenant ${tenantId}` : ''}`);
 	} catch (error) {
-		logger.error('Failed to seed roles:', error);
+		logger.error(`Failed to seed roles${tenantId ? ` for tenant ${tenantId}` : ''}:`, error);
 		throw error;
 	}
 }
@@ -142,9 +147,12 @@ export async function seedRoles(dbAdapter: DatabaseAdapter): Promise<void> {
  *
  * @returns Information about the first collection (for faster redirects)
  */
-export async function seedCollectionsForSetup(dbAdapter: DatabaseAdapter): Promise<{ firstCollection: { name: string; path: string } | null }> {
+export async function seedCollectionsForSetup(
+	dbAdapter: DatabaseAdapter,
+	tenantId?: string
+): Promise<{ firstCollection: { name: string; path: string } | null }> {
 	const overallStart = performance.now();
-	logger.info('📦 Seeding collections from filesystem...');
+	logger.info(`📦 Seeding collections from filesystem${tenantId ? ` for tenant ${tenantId}` : ''}...`);
 
 	if (!dbAdapter || !dbAdapter.collection) {
 		throw new Error('Database adapter or collection interface not available');
@@ -178,7 +186,7 @@ export async function seedCollectionsForSetup(dbAdapter: DatabaseAdapter): Promi
 			try {
 				const createStart = performance.now();
 				// Try to create the collection model in database
-				await dbAdapter.collection.createModel(schema);
+				await dbAdapter.collection.createModel(schema, tenantId); // Pass tenantId
 
 				// Add small delay to ensure model registration completes before next one
 				await new Promise((resolve) => setTimeout(resolve, 100)); // 100ms delay
@@ -204,7 +212,7 @@ export async function seedCollectionsForSetup(dbAdapter: DatabaseAdapter): Promi
 					logger.debug(`Collection '${schema.name || 'unknown'}' already exists, skipping`);
 					skipCount++;
 				} else {
-					logger.error(`❌ Failed to create collection '${schema.name || 'unknown'}': ${errorMessage}`);
+					logger.error(`❌ Failed to create collection '${schema.name || 'unknown'}'${tenantId ? ` for tenant ${tenantId}` : ''}: ${errorMessage}`);
 					if (error instanceof Error && error.stack) {
 						logger.debug('Stack trace:', error.stack);
 					}
@@ -237,33 +245,35 @@ export async function seedCollectionsForSetup(dbAdapter: DatabaseAdapter): Promi
 }
 
 // Initialize system from setup using database-agnostic interface
-export async function initSystemFromSetup(adapter: DatabaseAdapter): Promise<{ firstCollection: { name: string; path: string } | null }> {
-	logger.info('🚀 Starting system initialization from setup...');
+export async function initSystemFromSetup(
+	adapter: DatabaseAdapter,
+	tenantId?: string,
+	isDemoSeed = false
+): Promise<{ firstCollection: { name: string; path: string } | null }> {
+	logger.info(`🚀 Starting system initialization from setup${tenantId ? ` for tenant ${tenantId}` : ''}...`);
 
 	if (!adapter) {
 		throw new Error('Database adapter not available. Database must be initialized first.');
 	}
 
 	// Seed the database with default settings using database-agnostic interface
-	await seedSettings(adapter);
+	await seedSettings(adapter, tenantId, isDemoSeed); // Pass tenantId and isDemoSeed
 
 	// Seed the default theme
-	await seedDefaultTheme(adapter);
+	await seedDefaultTheme(adapter, tenantId); // Pass tenantId
 
 	// Seed default roles into database (from shared defaultRoles module)
-	await seedRoles(adapter);
+	await seedRoles(adapter, tenantId); // Pass tenantId
 
 	// Seed collections from filesystem
-	// This creates collection models in MongoDB so ContentManager can access them quickly
-	// Uses seedCollectionsForSetup() which bypasses ContentManager to avoid global dbAdapter dependency
-	const { firstCollection } = await seedCollectionsForSetup(adapter);
+	const { firstCollection } = await seedCollectionsForSetup(adapter, tenantId); // Pass tenantId
 
 	// Invalidate the settings cache and reload from database
-	invalidateSettingsCache();
+	invalidateSettingsCache(tenantId); // Invalidate cache for specific tenantId
 	const { loadSettingsFromDB } = await import('@src/databases/db');
-	await loadSettingsFromDB();
+	await loadSettingsFromDB(); // This load should now be tenant-aware if locals.tenantId is set
 
-	logger.info('✅ System initialization completed');
+	logger.info(`✅ System initialization completed${tenantId ? ` for tenant ${tenantId}` : ''}`);
 
 	return { firstCollection };
 }
@@ -393,8 +403,8 @@ export const defaultPrivateSettings: Array<{ key: string; value: unknown; descri
  * Only seeds settings that don't already exist (smart seeding).
  * @param dbAdapter Database adapter to use for operations
  */
-export async function seedSettings(dbAdapter: DatabaseAdapter): Promise<void> {
-	logger.info('🌱 Checking which settings need seeding...');
+export async function seedSettings(dbAdapter: DatabaseAdapter, tenantId?: string, isDemoSeed = false): Promise<void> {
+	logger.info(`🌱 Checking which settings need seeding${tenantId ? ` for tenant ${tenantId}` : ''}...`);
 
 	if (!dbAdapter || !dbAdapter.systemPreferences) {
 		throw new Error('Database adapter or systemPreferences interface not available');
@@ -403,7 +413,7 @@ export async function seedSettings(dbAdapter: DatabaseAdapter): Promise<void> {
 	// Test database accessibility
 	try {
 		// Try a simple getMany operation to test connectivity
-		await dbAdapter.systemPreferences.getMany(['HOST_DEV'], 'system');
+		await dbAdapter.systemPreferences.getMany(['HOST_DEV'], 'system', tenantId); // Pass tenantId
 		logger.debug('Database adapter is accessible');
 	} catch (error) {
 		logger.error('Database adapter is not accessible:', error);
@@ -420,23 +430,23 @@ export async function seedSettings(dbAdapter: DatabaseAdapter): Promise<void> {
 	let existingSettings: Record<string, unknown> = {};
 
 	try {
-		const result = await dbAdapter.systemPreferences.getMany(allKeys, 'system');
+		const result = await dbAdapter.systemPreferences.getMany(allKeys, 'system', tenantId); // Pass tenantId
 		if (result.success && result.data) {
 			existingSettings = result.data;
 		}
 	} catch (error) {
-		logger.debug('Could not check existing settings, will seed all:', error);
+		logger.debug(`Could not check existing settings for tenant ${tenantId}, will seed all:`, error);
 	}
 
 	// Filter out settings that already exist
 	const settingsToSeed = allSettings.filter((setting) => !(setting.key in existingSettings));
 
 	if (settingsToSeed.length === 0) {
-		logger.info('✅ All settings already exist, skipping settings seeding');
+		logger.info(`✅ All settings already exist${tenantId ? ` for tenant ${tenantId}` : ''}, skipping settings seeding`);
 		return;
 	}
 
-	logger.info(`🌱 Seeding ${settingsToSeed.length} missing settings (${Object.keys(existingSettings).length} already exist)...`);
+	logger.info(`🌱 Seeding ${settingsToSeed.length} missing settings${tenantId ? ` for tenant ${tenantId}` : ''} (${Object.keys(existingSettings).length} already exist)...`);
 
 	// Prepare settings for batch operation with category
 	const settingsToSet: Array<{
@@ -445,17 +455,28 @@ export async function seedSettings(dbAdapter: DatabaseAdapter): Promise<void> {
 		category: 'public' | 'private';
 		scope: 'user' | 'system';
 		userId?: DatabaseId;
+		tenantId?: string; // Add tenantId here
 	}> = [];
 
 	for (const setting of settingsToSeed) {
 		// Determine category based on whether the setting is in the private list
 		const category = privateSettingKeys.has(setting.key) ? 'private' : 'public';
 
+		let value = setting.value;
+
+		// Override DEMO, SEASONS, SEASON_REGION if isDemoSeed
+		if (isDemoSeed) {
+			if (setting.key === 'DEMO') value = true;
+			if (setting.key === 'SEASONS') value = true;
+			if (setting.key === 'SEASON_REGION') value = 'Western_Europe';
+		}
+
 		settingsToSet.push({
 			key: setting.key,
-			value: setting.value, // Store the actual value directly
+			value: value, // Store the actual value directly
 			category, // Add category field for proper classification
-			scope: 'system'
+			scope: 'system',
+			...(tenantId && { tenantId }) // Conditionally add tenantId
 		});
 	}
 
@@ -467,9 +488,9 @@ export async function seedSettings(dbAdapter: DatabaseAdapter): Promise<void> {
 			throw new Error(result.error?.message || 'Failed to seed settings');
 		}
 
-		logger.info(`✅ Seeded ${settingsToSeed.length} missing settings`);
+		logger.info(`✅ Seeded ${settingsToSet.length} missing settings`);
 	} catch (error) {
-		logger.error('Failed to seed settings:', error);
+		logger.error(`Failed to seed settings${tenantId ? ` for tenant ${tenantId}` : ''}:`, error);
 		throw error;
 	}
 
@@ -570,6 +591,7 @@ export async function importSettingsSnapshot(snapshot: Record<string, unknown>, 
 		value: unknown;
 		scope: 'user' | 'system';
 		userId?: DatabaseId;
+		tenantId?: string; // Add tenantId here for import
 	}> = [];
 
 	for (const [key, settingData] of Object.entries(snapshot.settings)) {
@@ -583,7 +605,8 @@ export async function importSettingsSnapshot(snapshot: Record<string, unknown>, 
 				isGlobal: true,
 				updatedAt: new Date()
 			},
-			scope: 'system'
+			scope: 'system',
+			...(tenantId && { tenantId }) // Conditionally add tenantId
 		});
 	}
 

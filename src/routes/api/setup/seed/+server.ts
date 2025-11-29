@@ -13,15 +13,20 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { logger } from '@utils/logger.server';
 import type { DatabaseConfig } from '@src/databases/schemas';
+import { env } from '$env/dynamic/private';
+import fs from 'fs/promises';
+import path from 'path';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const dbConfig = (await request.json()) as DatabaseConfig;
+		const isDemo = env.SVELTYCMS_DEMO === 'true';
 
-		logger.info('� Starting setup initialization...', {
+		logger.info(' Starting setup initialization...', {
 			host: dbConfig.host,
 			port: dbConfig.port,
-			name: dbConfig.name
+			name: dbConfig.name,
+			demo: isDemo
 		});
 
 		// STEP 1: Write private.ts with database credentials
@@ -29,6 +34,20 @@ export const POST: RequestHandler = async ({ request }) => {
 		const { writePrivateConfig } = await import('../writePrivateConfig');
 		await writePrivateConfig(dbConfig);
 		logger.info('✅ Private configuration file written');
+
+		if (isDemo) {
+			const privateConfigPath = path.resolve(process.cwd(), 'config', 'private.ts');
+			let privateConfigFileContent = await fs.readFile(privateConfigPath, 'utf8');
+
+			// Enable MULTI_TENANT for demo mode
+			privateConfigFileContent = privateConfigFileContent.replace('MULTI_TENANT: false,', 'MULTI_TENANT: true,');
+            
+            // Add DEMO flag (this will be picked up by schemas.ts and then by db.ts)
+			privateConfigFileContent += '\nexport const DEMO = true;\n';
+
+			await fs.writeFile(privateConfigPath, privateConfigFileContent, 'utf8');
+			logger.info('✅ DEMO flag and MULTI_TENANT enabled in private.ts');
+		}
 
 		// STEP 2: Asynchronously seed database and get first collection for quick redirect
 		logger.info('Pre-scanning collections for faster redirect...');

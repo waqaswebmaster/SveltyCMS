@@ -101,7 +101,8 @@ export const privateConfigSchema = object({
 
 	TWITCH_CLIENT_ID: optional(pipe(string(), minLength(1))),
 	TWITCH_TOKEN: optional(pipe(string(), minLength(1))),
-	TIKTOK_TOKEN: optional(pipe(string(), minLength(1)))
+	TIKTOK_TOKEN: optional(pipe(string(), minLength(1))),
+	DEMO: optional(boolean())
 });
 
 /**
